@@ -59,9 +59,6 @@ mask2 <- mask2 %>%
                         str_replace_all("San Andrés", "San Andrés y Providencia") %>%
                         str_replace_all("Bogotá D C", "Bogotá D.C"))
 
-
-detach("package:dplyr", unload = TRUE) #solución de conflicto con paquetes
-detach("package:stringr", unload = TRUE)
 ```
 
 ```{r}
@@ -91,6 +88,8 @@ df_m <- merge(
 
 # visualizamos las primeras 5 filas
 dim(df_m)
+
+
 ```
 
 Vamos a verificar si hay valores nulos en la columna data_p.depa_nombre.
@@ -98,6 +97,9 @@ Vamos a verificar si hay valores nulos en la columna data_p.depa_nombre.
 ```{r}
 na_rows <- df_m[is.na(df_m$data_p.depa_nombre), ]
 dim(na_rows)
+
+# eliminamos variables auxiliares
+rm(unique_df, mask1, mask2, na_rows)
 ```
 
 Como no hay valores nulos en la columna data_p.depa_nombre, procedemos a
@@ -106,9 +108,6 @@ realizar el mismo procedimiento pero con la información de municipios.
 ## limpieza de datos Municipios
 
 ```{r}
-# importamos librerias
-library(dplyr)
-library(stringr)
 # generamos dataframes auxiliares
 mask1 <- unique(data.frame(data_p$muni_nombre))
 mask2 <- data.frame(data_m$Municipio, data_m$Depmun)
@@ -144,6 +143,9 @@ print(paste("Rows of data_m after merge are:", dim(df_cleaned)[1]))
 na_rows <- df_cleaned[is.na(df_cleaned$data_p.muni_nombre), ]
 dim(na_rows)
 
+# eliminamos variables auxiliares
+rm(unique_df, mask1, mask2)
+
 ```
 
 Debido a que tenemos valores nulos en la columna data_p.muni_nombre,
@@ -151,7 +153,7 @@ vamos a validar los `r nrow(na_rows)` valores nulos.
 
 ```{r}
 val1 <- unique(data.frame(na_rows$Municipio))
-
+mask2 <- data.frame(data_m$Municipio, data_m$Depmun)
 # juntar la data de mark2 con val1
 mun_na <- unique(merge(
   mask2, val1, by.x = "data_m.Municipio", 
@@ -167,28 +169,10 @@ mun_na <- mun_na %>%
                            str_to_upper() %>%
                            str_replace_all("BOGOTÁ D C", "BOGOTÁ D.C"))
 
+# eliminamos variables auxiliares
+rm(na_rows, mask2, val1)
+
 ```
 
-
-```{r}
-readRenviron("../../.Renviron") # cargar variables de entorno
-library(RSocrata)
-
-# acceder a las variables de entorno 
-app_token <- Sys.getenv("SOCRATA_APP_TOKEN")
-email <- Sys.getenv("SOCRATA_EMAIL")
-password <- Sys.getenv("SOCRATA_PASSWORD")
-
-# Use the environment variables
-df <- read.socrata(
-  "https://www.datos.gov.co/resource/xdk5-pm3f.json",
-  app_token = app_token,
-  email = email,
-  password = password
-)
-
-# View data
-head(df)
-```
 
 
