@@ -1,0 +1,194 @@
+---
+title: "Prueba Técnica Analista de datos ID 382 GITIAD"
+author: "Juan Esteban Grimaldos León"
+date: "`r Sys.Date()`"
+output: 
+  word_document: 
+    toc: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Importar data
+
+Como primera medida se importa las bases de datos de excel a R.
+Recordemos que el directorio es src. Para efectos prácticos, se realiza
+una conversión manual de los datos en xls a xlsx.
+
+```{r, importacion}
+library(readxl)
+print(getwd()) # dejamos el directorio de trabajo en la carpeta src
+data_m <- read_excel("../data/Municipios.xlsx")
+data_p <- read_excel("../data/Prestadores.xlsx")
+```
+
+# Limpieza de datos
+
+## limpieza de datos Departamentos
+
+Como en el Excel Municipios, tenemos el código del departamento pero el
+nombre de los departamentos está mal escrito, vamos a corregirlo. Para
+ello debemos insertar la información de los departamentos en la base de
+datos de municipios.
+
+```{r}
+# generamos dataframes auxiliares
+mask1 <- unique(data.frame(data_p$depa_nombre))
+mask2 <- data.frame(data_m$Departamento, data_m$Dep)
+
+```
+
+Como tenemos en Municipios varios datos con caracteres especiales, vamos
+a limpiar un poco los datos. En adición, vamos a unificar la información
+con Prestadores.
+
+```{r, include=FALSE}
+# limpiamos un poco los datos de mask2
+library(dplyr)
+library(stringr)
+mask2 <- mask2 %>%
+  mutate(data_m.Departamento = str_replace_all(data_m.Departamento, "\\s{2,}", " ") %>% 
+                        str_replace_all("[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "") %>%
+                        str_replace_all("U", "u") %>%
+                        str_replace_all("Valle del Cauca", "Valle del cauca") %>%
+                        str_replace_all("San Andrés", "San Andrés y Providencia") %>%
+                        str_replace_all("Bogotá D C", "Bogotá D.C"))
+
+
+detach("package:dplyr", unload = TRUE) #solución de conflicto con paquetes
+detach("package:stringr", unload = TRUE)
+```
+
+```{r}
+# juntamos estos dataframes en uno solo
+unique_df <- unique(merge(
+  mask1, mask2, by.x = "data_p.depa_nombre", 
+  by.y = "data_m.Departamento", all.x = TRUE))
+
+# regeneramos el indice
+row.names(unique_df) <- NULL
+
+# visualizamos las primeras 5 filas
+head(unique_df)
+```
+
+Como ya tenemos la información de los departamentos con código, vamos a
+unir esta información con la base de datos de municipios original.
+
+```{r}
+# comparamos las dimensiones de los dataframes antes y después de la unión
+print(dim(data_m))
+
+# juntamos los dataframes, la llamaremos df_m para poder comparar posibles
+# duplicados
+df_m <- merge(
+  data_m, unique_df, by.x = "Dep", by.y = "data_m.Dep", all.x = TRUE)
+
+# visualizamos las primeras 5 filas
+dim(df_m)
+```
+
+Vamos a verificar si hay valores nulos en la columna data_p.depa_nombre.
+
+```{r}
+na_rows <- df_m[is.na(df_m$data_p.depa_nombre), ]
+dim(na_rows)
+```
+
+Como no hay valores nulos en la columna data_p.depa_nombre, procedemos a
+realizar el mismo procedimiento pero con la información de municipios.
+
+## limpieza de datos Municipios
+
+```{r}
+# importamos librerias
+library(dplyr)
+library(stringr)
+# generamos dataframes auxiliares
+mask1 <- unique(data.frame(data_p$muni_nombre))
+mask2 <- data.frame(data_m$Municipio, data_m$Depmun)
+
+mask2 <- mask2 %>%
+  mutate(data_m.Municipio = str_replace_all(data_m.Municipio, "\\s{2,}", " ") %>%
+                        str_replace_all("[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "") %>%
+                        str_trim(side = "left") %>%
+                        str_trim(side = "right") %>%
+                        str_squish() %>%
+                        str_to_upper() %>%
+                        str_replace_all("Bogotá D C", "Bogotá D.C"))
+
+# juntamos estos dataframes en uno solo
+unique_df <- unique(merge(
+  mask1, mask2, by.x = "data_p.muni_nombre", 
+  by.y = "data_m.Municipio", all.x = TRUE))
+
+# comparamos las dimensiones de los dataframes antes y después de la unión
+print(paste("Rows of data_m before merge are:", dim(data_m)[1]))
+
+
+# juntamos los dataframes, la llamaremos df_m para poder comparar posibles
+# duplicados
+df_cleaned <- merge(
+  df_m, unique_df, by.x = "Depmun", by.y = "data_m.Depmun", all.x = TRUE)
+
+# visualizamos las primeras 5 filas
+print(paste("Rows of data_m after merge are:", dim(df_cleaned)[1]))
+
+
+# verificamos valores nulos
+na_rows <- df_cleaned[is.na(df_cleaned$data_p.muni_nombre), ]
+dim(na_rows)
+
+```
+
+Debido a que tenemos valores nulos en la columna data_p.muni_nombre,
+vamos a validar los `r nrow(na_rows)` valores nulos.
+
+```{r}
+val1 <- unique(data.frame(na_rows$Municipio))
+
+# juntar la data de mark2 con val1
+mun_na <- unique(merge(
+  mask2, val1, by.x = "data_m.Municipio", 
+  by.y = "na_rows.Municipio"))
+
+mun_na <- mun_na %>%
+  mutate(cleaned_Municipio = data_m.Municipio %>%
+                           str_replace_all("\\s{2,}", " ") %>%
+                           str_replace_all("[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "") %>%
+                           str_trim(side = "left") %>%
+                           str_trim(side = "right") %>%
+                           str_squish() %>%
+                           str_to_upper() %>%
+                           str_replace_all("BOGOTÁ D C", "BOGOTÁ D.C"))
+
+```
+
+
+```{r}
+readRenviron("../../.Renviron") # cargar variables de entorno
+library(RSocrata)
+
+# acceder a las variables de entorno 
+app_token <- Sys.getenv("SOCRATA_APP_TOKEN")
+email <- Sys.getenv("SOCRATA_EMAIL")
+password <- Sys.getenv("SOCRATA_PASSWORD")
+
+# Use the environment variables
+df <- read.socrata(
+  "https://www.datos.gov.co/resource/xdk5-pm3f.json",
+  app_token = app_token,
+  email = email,
+  password = password
+)
+
+# View data
+head(df)
+```
+
+
