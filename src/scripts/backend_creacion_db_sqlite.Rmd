@@ -1,0 +1,488 @@
+---
+title: "generación de base de datos sqlite para prueba tecnica"
+author: "Juan Esteban Grimaldos León"
+date: "`r Sys.Date()`"
+output: 
+  word_document: 
+    toc: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Importar data
+
+Como primera medida se importa las bases de datos de excel a R.
+Recordemos que el directorio es src. Para efectos prácticos, se realiza
+una conversión manual de los datos en xls a xlsx.
+
+```{r, importacion}
+library(readxl)
+print(getwd()) # dejamos el directorio de trabajo en la carpeta src
+data_m <- read_excel("../data/Municipios.xlsx")
+data_p <- read_excel("../data/Prestadores.xlsx")
+```
+
+# Limpieza de datos
+
+## limpieza de datos Departamentos
+
+Como en el Excel Municipios, tenemos el código del departamento pero el
+nombre de los departamentos está mal escrito, vamos a corregirlo. Para
+ello debemos insertar la información de los departamentos en la base de
+datos de municipios.
+
+Esto lo hacemos con el fin de poder generar llaves únicas entre bases y poder
+comunicar las bases Municipios y Prestadores.
+
+```{r}
+# generamos dataframes auxiliares
+mask1 <- unique(data.frame(data_p$depa_nombre))
+mask2 <- data.frame(data_m$Departamento, data_m$Dep)
+
+```
+
+Como tenemos en Municipios varios datos con caracteres especiales, vamos
+a limpiar un poco los datos.
+
+```{r, include=FALSE}
+# limpiamos un poco los datos de mask2
+library(dplyr)
+library(stringr)
+mask2 <- mask2 %>%
+  mutate(data_m.Departamento = str_replace_all(data_m.Departamento, "\\s{2,}", " ") %>% 
+                        str_replace_all("[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "") %>%
+                        str_replace_all("U", "u") %>%
+                        str_replace_all("Valle del Cauca", "Valle del cauca") %>%
+                        str_replace_all("San Andrés", "San Andrés y Providencia") %>%
+                        str_replace_all("Bogotá D C", "Bogotá D.C"))
+
+```
+
+```{r}
+# juntamos estos dataframes en uno solo
+unique_df <- unique(merge(
+  mask1, mask2, by.x = "data_p.depa_nombre", 
+  by.y = "data_m.Departamento", all.x = TRUE))
+
+# regeneramos el indice
+row.names(unique_df) <- NULL
+
+# visualizamos las primeras 5 filas
+head(unique_df)
+```
+
+Como ya tenemos la información de los departamentos con código, vamos a
+unir esta información con la base de datos de municipios original.
+
+```{r}
+# comparamos las dimensiones de los dataframes antes y después de la unión
+print(dim(data_m))
+
+# juntamos los dataframes, la llamaremos df_m para poder comparar posibles
+# duplicados
+df_m <- merge(
+  data_m, unique_df, by.x = "Dep", by.y = "data_m.Dep", all.x = TRUE)
+
+# visualizamos las primeras 5 filas
+dim(df_m)
+
+
+```
+
+Vamos a verificar si hay valores nulos en la columna data_p.depa_nombre. De 
+haberlos, perderíamos información valiosa cuando juntemos las bases.
+
+```{r}
+na_rows <- df_m[is.na(df_m$data_p.depa_nombre), ]
+dim(na_rows)
+
+# eliminamos variables auxiliares
+rm(unique_df, mask1, mask2, na_rows)
+```
+
+Como no hay valores nulos en la columna data_p.depa_nombre, procedemos a
+realizar el mismo procedimiento pero con la información de municipios.
+
+## limpieza de datos Municipios
+
+```{r}
+library(stringi)
+# generamos dataframes auxiliares
+mask1 <- unique(data.frame(data_p$muni_nombre))
+mask2 <- data.frame(data_m$Municipio, data_m$Depmun)
+
+mask1$data_p.muni_nombre <- stri_trans_general(mask1$data_p.muni_nombre, "Latin-ASCII")
+mask2 <- mask2 %>%
+  mutate(data_m.Municipio = str_replace_all(data_m.Municipio, "\\s{2,}", " ") %>%
+                        str_replace_all("[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ ]", "") %>%
+                        str_trim(side = "left") %>%
+                        str_trim(side = "right") %>%
+                        str_squish() %>%
+                        str_to_upper() %>%
+                        str_replace_all(" D C", ""))
+
+mask2$data_m.Municipio <- stri_trans_general(mask2$data_m.Municipio, "Latin-ASCII")
+
+# juntamos estos dataframes en uno solo
+unique_df <- unique(merge(
+  mask1, mask2, by.x = "data_p.muni_nombre", 
+  by.y = "data_m.Municipio", all.x = TRUE))
+
+# comparamos las dimensiones de los dataframes antes y después de la unión
+print(paste("Rows of data_m before merge are:", dim(data_m)[1]))
+
+# juntamos con df_m que es la variable de Departamentos
+data_m_cleaned <- merge(
+  df_m, unique_df, by.x = "Depmun", by.y = "data_m.Depmun", all.x = TRUE)
+
+# visualizamos las primeras 5 filas
+print(paste("Rows of data_m after merge are:", dim(data_m_cleaned)[1]))
+
+
+# verificamos valores nulos
+na_rows <- data_m_cleaned[is.na(data_m_cleaned$data_p.muni_nombre), ]
+dim(na_rows)
+
+
+
+
+
+```
+
+Debido a que tenemos valores nulos en la columna data_p.muni_nombre,
+vamos a validar los `r nrow(na_rows)` valores nulos. Validamos los casos
+
+```{r}
+head(unique_df[is.na(unique_df$data_m.Depmun), ])
+```
+dentro de la validación tenemos el siguiente ejemplo, "CHIBOLO" y "CHIVOLO" están
+escritos de distinta forma en las dos bases. En Prestadores está escrito como
+"CHIBOLO" y en Municipios como "CHIVOLO" con código "47170". 
+"DIBULLA" es otro ejemplo. Debido a la  manualidad de la corrección, 
+vamos a corregir los datos apoyandonos en la API de datos abiertos de Colombia.
+
+```{r}
+any(data_p$muni_nombre == "CHIBOLO")
+any(mask2$data_m.Municipio == "CHIVOLO")
+any(mask2$data_m.Municipio == "CHIBOLO")
+
+# eliminamos variables auxiliares
+rm( mask1, mask2, df_m, unique_df, na_rows)
+```
+
+Vamos a buscar los municipios faltantes en datos abiertos para poder tener
+la información completa y garantizar que los municipios faltantes en Prestadores
+son de verdad información faltante. Para ello, vamos a transformar los datos de
+la API para que crucen con los datos de municipios y Prestadores.
+
+```{r}
+readRenviron("../../.Renviron") # cargar variables de entorno
+library(RSocrata)
+# usar las variables de entorno para este caso y extraer la información
+data_gov <- read.socrata(
+  "https://www.datos.gov.co/resource/xdk5-pm3f.json",
+  app_token = Sys.getenv("SOCRATA_APP_TOKEN"),
+  email = Sys.getenv("SOCRATA_EMAIL"),
+  password = Sys.getenv("SOCRATA_PASSWORD")
+)
+
+# para unir las bases de datos, remplazamos el caracter "." por ""
+
+data_gov <- data_gov %>%
+  mutate(c_digo_dane_del_municipio = str_replace_all(c_digo_dane_del_municipio, "\\.", ""))
+
+# necesitamos tener un 0 cuando el código del municipio sea de un solo dígito
+
+data_gov <- data_gov %>%
+    mutate(c_digo_dane_del_municipio = ifelse(
+        nchar(c_digo_dane_del_departamento) == 1,
+        paste0("0", c_digo_dane_del_municipio),
+        c_digo_dane_del_municipio
+    ))
+
+# también que cuando sean 4 dígitos, se les añada un 0 al final
+
+data_gov <- data_gov %>%
+    mutate(c_digo_dane_del_municipio = ifelse(
+        nchar(c_digo_dane_del_municipio) == 4,
+        paste0(c_digo_dane_del_municipio, "0"),
+        c_digo_dane_del_municipio
+    ))
+
+# también que cuando sean 3 dígitos, se les añaden dos 0 al final
+
+data_gov <- data_gov %>%
+    mutate(c_digo_dane_del_municipio = ifelse(
+        nchar(c_digo_dane_del_municipio) == 3,
+        paste0(c_digo_dane_del_municipio, "00"),
+        c_digo_dane_del_municipio
+    ))
+
+# el mismo caso aplica para el departamento
+data_gov <- data_gov %>%
+  mutate(c_digo_dane_del_departamento = if_else(
+    nchar(c_digo_dane_del_departamento) == 1, # verifica sin son de un solo dígito
+    str_pad(c_digo_dane_del_departamento, width = 2, pad = "0"),
+    c_digo_dane_del_departamento
+  ))
+
+# veamos las 5 primeras filas
+head(data_gov)
+
+
+
+```
+
+
+Como en Departamento no tenemos problemas,por ende vamos a buscar solo los
+municipios.
+
+```{r}
+val1 <- data.frame(data_gov$c_digo_dane_del_municipio, data_gov$municipio)
+data_m_cleaned_2 <- merge(
+  data_m_cleaned,val1 , by.x = "Depmun", 
+  by.y = "data_gov.c_digo_dane_del_municipio", all.x = TRUE
+  )
+
+# ver si hay valores faltantes con la API
+print(dim(data_m_cleaned_2[is.na(data_m_cleaned_2$data_gov.municipio), ]))
+rm(val1)
+
+```
+
+como paso final vamos a reemplazar la información faltante de Municipios con
+la información del la API.
+
+```{r}
+# reemplazamos los na de data_p.muni_nombre con data_gov.municipio
+data_m_cleaned_2$data_p.muni_nombre[is.na(data_m_cleaned_2$data_p.muni_nombre)] <- 
+  data_m_cleaned_2$data_gov.municipio[is.na(data_m_cleaned_2$data_p.muni_nombre)]
+
+# dejamos en letra capital data_p.muni_nombre
+data_m_cleaned_2$data_p.muni_nombre <- toupper(data_m_cleaned_2$data_p.muni_nombre)
+
+# sustituimos los caracteres asentuados por los caracteres normales
+data_m_cleaned_2$data_p.muni_nombre <- stri_trans_general(data_m_cleaned_2$data_p.muni_nombre, "Latin-ASCII")
+# renombrar data_p.muni_nombre por muni_nombre
+data_m_cleaned_2 <- data_m_cleaned_2 %>%
+  rename(muni_nombre = data_p.muni_nombre, depa_nombre = data_p.depa_nombre)
+
+# remplazamos en data_p los caracteres asentuados por los caracteres normales
+data_p$muni_nombre <- stri_trans_general(data_p$muni_nombre, "Latin-ASCII")
+
+```
+Con esto, ya podemos generar las llaves para hacer unión de las bases de datos
+
+
+## Unir Municipios con Prestadores
+
+```{r}
+# generamos las llaves
+data_m_cleaned_2$llave <- paste0(data_m_cleaned_2$depa_nombre, data_m_cleaned_2$muni_nombre)
+
+data_p$llave <- paste0(data_p$depa_nombre, data_p$muni_nombre)
+
+
+# unimos las bases de datos
+data_final <- merge(
+  data_p, data_m_cleaned_2, by = "llave", all.x = TRUE)
+
+
+columns_to_exclude <- c("Municipio", "Departamento", 
+                        "depa_nombre.y", "muni_nombre.y")
+data_final <- data_final %>%
+  select(-all_of(columns_to_exclude))
+# obtener lista de na en 
+
+missing_dep_data <- data_final %>%
+  filter(is.na(Dep)) %>%
+  select(depa_nombre = depa_nombre.x, muni_nombre = muni_nombre.x) %>%
+  distinct()
+
+
+head(missing_dep_data)
+
+```
+
+
+Como podemos ver, tenemos municipios donde el departamento es igual a la ciudad
+y no al departamento. Vamos a corregir estos datos.
+
+
+```{r}
+missing_dep_data <- missing_dep_data %>%
+  mutate(depa_nombre = toupper(depa_nombre)) %>%
+  filter(depa_nombre == muni_nombre)
+
+val1 <- data_gov %>%
+  select(departamento, municipio) %>%
+  mutate(municipio_2 = stri_trans_general(toupper(municipio), "Latin-ASCII"))
+
+val2 <- merge(
+  missing_dep_data, val1, by.y = "municipio_2", by.x ="muni_nombre", all.x = TRUE)
+
+val2$llave <- paste0(val2$depa_nombre, val2$muni_nombre)
+
+data_p$depa_nombre <- ifelse(!is.na(match(data_p$depa_nombre, val2$municipio)),
+                         val2$departamento[match(data_p$depa_nombre, val2$municipio)],
+                         data_p$depa_nombre)
+
+rm(val1, val2, missing_dep_data)
+
+```
+
+
+con esto regeneramos la llave en Prestadores
+```{r}
+data_p$llave <- paste0(data_p$depa_nombre, data_p$muni_nombre)
+
+# casos como valle cel cauca vs Valle del Cauca entre bases
+data_p <- data_p %>%
+  mutate(llave = toupper(paste0(depa_nombre, muni_nombre)))
+
+data_m_cleaned_2 <- data_m_cleaned_2 %>%
+  mutate(llave = toupper(paste0(depa_nombre, muni_nombre)))
+
+# unimos las bases de datos
+data_final <- merge(
+  data_p, data_m_cleaned_2, by = "llave", all.x = TRUE)
+
+
+columns_to_exclude <- c("Municipio", "Departamento", 
+                        "depa_nombre.y", "muni_nombre.y")
+data_final <- data_final %>%
+  select(-all_of(columns_to_exclude))
+# obtener lista de na en 
+
+missing_dep_data <- data_final %>%
+  filter(is.na(Dep)) %>%
+  select(depa_nombre = depa_nombre.x, muni_nombre = muni_nombre.x) %>%
+  distinct()
+
+
+head(missing_dep_data)
+```
+
+remplazo manual de hallazgos
+```{r}
+
+data_p <- data_p %>%
+  mutate(muni_nombre = muni_nombre%>%
+           str_replace_all("DIBULLA", "DIBULA") %>%
+           str_replace_all("CHIBOLO", "CHIVOLO") %>%
+           str_replace_all("PUEBLOVIEJO", "PUEBLO VIEJO"))
+
+
+# NO ESTÁ EN LA BASE DE DATOS DE MUNICIPIOS
+# GUACHENE 
+# SAN LUIS DE PALENQUE
+# SINCE
+
+# arreglar llaves en data_p
+# BOYACÁBUENAVISTA a BOYACÁBUENA VISTA
+# ANTIOQUIASAN ANDRES a ANTIOQUIASAN ANDRES DE CUERQUIA
+# BOLÍVARSAN PABLO a BOLÍVARSAN PABLO DE BORBUR
+# VISTAHERMOSA a VISTA HERMOSA
+# TUMACO a SAN ANDRÉS DE TUMACO
+# VALLE DEL GUAMEZ a VALLE DE GUAMEZ
+
+
+
+data_p$llave <- paste0(data_p$depa_nombre, data_p$muni_nombre)
+
+# casos como valle cel cauca vs Valle del Cauca entre bases
+data_p <- data_p %>%
+  mutate(llave = toupper(paste0(depa_nombre, muni_nombre)) %>%
+           str_replace_all("BOYACÁBUENAVISTA", "BOYACÁBUENA VISTA") %>%
+           str_replace_all("ANTIOQUIASAN ANDRES", "ANTIOQUIASAN ANDRES DE CUERQUIA") %>%
+           str_replace_all("BOLÍVARSAN PABLO", "BOLÍVARSAN PABLO DE BORBUR") %>%
+           str_replace_all("VISTAHERMOSA", "VISTA HERMOSA") %>%
+           str_replace_all("TUMACO", "SAN ANDRES DE TUMACO") %>%
+           str_replace_all("VALLE DEL GUAMUEZ", "VALLE DE GUAMEZ") %>%
+           str_replace_all("RIOBLANCO", "RIO BLANCO"))
+
+
+data_m_cleaned_2 <- data_m_cleaned_2 %>%
+  mutate(llave = toupper(paste0(depa_nombre, muni_nombre)))
+
+# unimos las bases de datos
+data_final <- merge(
+  data_p, data_m_cleaned_2, by = "llave", all.x = TRUE)
+
+
+columns_to_exclude <- c("Municipio", "Departamento", 
+                        "depa_nombre.y", "muni_nombre.y")
+data_final <- data_final %>%
+  select(-all_of(columns_to_exclude)) %>%
+  rename(
+    depa_nombre = depa_nombre.x,
+    muni_nombre = muni_nombre.x
+  )
+# obtener lista de na en 
+
+# Lista de municipios a excluir
+municipios_excluir <- c(
+  "GUACHENE", "SAN LUIS DE PALENQUE", "SINCE"
+  )
+
+# Filtrar datos y excluir municipios
+missing_dep_data <- data_final %>%
+  filter(is.na(Dep)) %>%
+  filter(!muni_nombre %in% municipios_excluir) %>%
+  select(depa_nombre = depa_nombre, muni_nombre = muni_nombre) %>%
+  distinct()
+
+
+dim(missing_dep_data)[1]
+
+```
+
+Con esto, ya tenemos la información completa de los departamentos y municipios.
+Además sabemos que departamentos de Prestadores no tenemos información del 
+Municipio.
+
+```{r}
+missing_dep_data <- data_final %>%
+  filter(is.na(Dep)) %>%
+  select(depa_nombre = depa_nombre, muni_nombre = muni_nombre) %>%
+  distinct()
+
+head(missing_dep_data)
+
+# remover variables auxiliares
+rm(data_gov, data_m_cleaned, missing_dep_data, 
+   columns_to_exclude, municipios_excluir)
+```
+
+
+# Exportar data a SQLite
+
+Con el objeto llamado data_final tenemos de una vez relacionadas las bases de
+datos de Municipios y Prestadores. En adición, tanto data_p "Prestadores" como
+"data_m" "Municipios" tienen la una llave que los conecta y relaciona entre el 
+nombre del municipio y el nombre del departamento.
+
+```{r}
+library(RSQLite)
+library(DBI)
+# creamos una conección a la base de datos
+conn <- dbConnect(RSQLite::SQLite(), "../data/my_database.sqlite")
+
+```
+
+
+```{r}
+# Write dataframes to SQLite database
+dbWriteTable(conn, "Municipios", data_m_cleaned_2, overwrite = TRUE)
+dbWriteTable(conn, "Prestadores", data_p, overwrite = TRUE)
+dbWriteTable(conn, "base", data_final, overwrite = TRUE)
+```
+
+
+
+

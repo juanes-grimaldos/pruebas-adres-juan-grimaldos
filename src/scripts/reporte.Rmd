@@ -1,0 +1,46 @@
+---
+title: "Prueba Técnica Analista de datos ID 382 GITIAD"
+author: "Juan Esteban Grimaldos León"
+date: "`r Sys.Date()`"
+output: 
+  word_document: 
+    toc: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# conección a la base de datos
+
+conectamos a la base de datos
+```{r}
+library(RSQLite)
+library(DBI)
+# creamos una conección a la base de datos
+conn <- dbConnect(RSQLite::SQLite(), "../data/my_database.sqlite")
+
+```
+
+
+# Exploración de datos
+
+```{r}
+# SQL query to count the number of doctors by region
+query <- "
+SELECT depa_nombre, COUNT(nombre_prestador) AS IPS
+FROM base
+GROUP BY depa_nombre
+ORDER BY IPS ASC;
+"
+
+# Execute the query and fetch the results
+result <- dbGetQuery(conn, query)
+
+# Print the result
+print(result)
+
+```
