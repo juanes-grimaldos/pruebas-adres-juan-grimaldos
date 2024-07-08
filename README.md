@@ -19,7 +19,7 @@ Para ejecutar este proyecto, necesitarás R instalado en tu sistema. Además, se
 
 1. Clona este repositorio en tu máquina local.
 2. Abre el proyecto en RStudio.
-3. Ejecuta `renv::restore()` para instalar las dependencias.
-4. Ejecuta el script `scripts/backend_creacion_db_sqlite.Rmd` para cargar las bases de datos en SQLite.
-5. Abre y ejecuta `scripts/reporte.Rmd` para ver el análisis. Utiliza el directorio de trabajo como el del documento. 
+3. Ejecuta `renv::restore()` para instalar las dependencias. Si no tienes iniciado un proyecto de renv te pedirá activarlo primero. Luego de activarlo debes correr el mismo comando y darle a sí para installar las dependencias
+5. Ejecuta el script `scripts/backend_creacion_db_sqlite.Rmd` para cargar las bases de datos en SQLite.
+6. Abre y ejecuta `scripts/reporte.Rmd` para ver el análisis. Utiliza el directorio de trabajo como el del documento. 
 
