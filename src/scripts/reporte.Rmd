@@ -28,19 +28,640 @@ conn <- dbConnect(RSQLite::SQLite(), "../data/my_database.sqlite")
 
 # Exploración de datos
 
+
+## descipción de tipos de prestador de servicio de salud
+
 ```{r}
-# SQL query to count the number of doctors by region
+# SQL query para contar el número de prestadores de servicios de salud por tipo
 query <- "
-SELECT depa_nombre, COUNT(nombre_prestador) AS IPS
+SELECT clpr_nombre, COUNT(clpr_nombre) AS count
 FROM base
-GROUP BY depa_nombre
-ORDER BY IPS ASC;
+WHERE muni_nombre NOT IN ('SAN LUIS DE PALENQUE', 'GUACHENE', 'SINCE')
+GROUP BY clpr_nombre
+ORDER BY count DESC;
 "
 
-# Execute the query and fetch the results
+# ejecutar el query y guardar en "result"
 result <- dbGetQuery(conn, query)
 
-# Print the result
+# mostrar resultado
 print(result)
 
 ```
+
+
+
+Lo que más hay son profesionales independientes, entonces dividimos el posible
+análisis en dos
+
+## definición de las filas
+
+los duplicados en razón social son las entidades sociales que están en más de
+un municipio. 
+
+```{r}
+query <- "
+SELECT razon_social, COUNT(razon_social) AS count
+FROM base
+WHERE muni_nombre NOT IN ('SAN LUIS DE PALENQUE', 'GUACHENE', 'SINCE')
+GROUP BY razon_social
+HAVING count > 1
+ORDER BY count DESC;
+"
+result <- dbGetQuery(conn, query)
+head(result)
+```
+Con esta información, podemos ver que hay entidades sociales que están en más de
+un municipio. Sin embargo, sabiendo que Sport City SAS es una cadena de gimnasios
+y que su Objeto Social Diferente a la Prestación de Servicios de Salud, 
+
+
+# Análisis
+
+## Gráficos de dispersión
+
+Gráficos de dispersión: Se puede crear un gráfico de dispersión donde el eje X represente la densidad de servicios de salud por metro cuadrado y el eje Y represente la relación entre la población y el número de entidades prestadoras de salud por 10.000 habitantes. Cada punto del gráfico representaría una región o subregión.
+
+### análisis de superficie y densidad de cobertura de salud
+
+1. Densidad de servicios de salud por metro cuadrado:
+Este indicador se calcula dividiendo la superficie total en metros cuadrados por
+el número de entidades prestadoras de salud. Nos permite evaluar la 
+concentración de servicios de salud en un área determinada. Con este indicador
+podemos afirmar cuantos metros cuadrados hay por cada entidad prestadora de
+salud. Una menor proporción indica una mayor concentración de servicios de
+salud, mientras que una mayor proporción puede sugerir una posible escacez.
+
+Fórmula:
+Densidad = Superficie total (m²) / Número de entidades prestadoras de salud
+
+Significa:
+Densidad = 65000 / 3 = 21667 m² 
+Cada 21667 m2 hay un doctor o ips. 
+
+
+Para analizar la superficie y la densidad de cobertura potencial de salud, vamos
+a calcular la densidad de cobertura de salud por m².
+
+```{r}
+# SQL query para calcular la densidad de cobertura de salud en m²
+query <- "
+SELECT 
+    depa_nombre,
+    muni_nombre,
+    Superficie,
+    COUNT(nombre_prestador) AS institutions,
+    Superficie / (COUNT(nombre_prestador)) AS density_of_health_coverage_by_m2
+FROM base
+WHERE clpr_codigo IN (1, 2)
+  AND muni_nombre NOT IN ('SAN LUIS DE PALENQUE', 'GUACHENE', 'SINCE')
+GROUP BY 
+    depa_nombre, 
+    muni_nombre, 
+    Superficie
+ORDER BY density_of_health_coverage_by_m2 DESC;
+"
+# Ejecutar query
+density_df <- dbGetQuery(conn, query)
+# ver resultados
+head(density_df)
+
+```
+
+Con esta medida, necesitamos filtrar la información de los municipios más 
+dispersos, para ello, vamos a graficar la densidad de cobertura de salud por m²
+
+```{r}
+library(ggplot2)
+ggplot(density_df, aes(x=density_of_health_coverage_by_m2)) + 
+  geom_step(stat="ecdf", aes(y= ..y..*100)) +
+  scale_x_continuous(name ="Densidad de Cobertura de Salud por m²") + 
+  scale_y_continuous(name ="Porcentaje acumulado")
+
+
+```
+
+
+Como la grafica no es muy diciente vamos a analizar los percentiles de la
+información.
+```{r}
+# Calcular percentiles
+percentiles <- quantile(density_df$density_of_health_coverage_by_m2, probs = seq(0, 1, by = 0.01), na.rm = TRUE)
+
+# Crear una tabla con los percentiles
+percentiles_table <- data.frame(percentile = names(percentiles), density_value = as.numeric(percentiles))
+
+# Mostrar la tabla de percentiles
+tail(percentiles_table, 30)
+```
+
+
+Sabemos que con la distribución acumulada de los datos, tenemos el 96% de los
+datos entre 941 y 1267 m² por institución. Por ende, vamos a filtrar los datos
+para trabajar con los municipios que tengan menos de 1000 m² por institución.
+
+
+```{r}
+
+library(ggplot2)
+library(dplyr)
+# Filtrar para incluir solo valores de density_of_health_coverage_by_km <= 1
+filtered_density_df <- density_df %>%
+  filter(density_of_health_coverage_by_m2 <= 1000)
+
+# lista de municipios excluidos
+municipios_no_incluidos <- density_df %>%
+  filter(density_of_health_coverage_by_m2 >= 1000)
+
+# Contar el número de valores únicos de muni_nombre en los datos originales
+muni_unicos_original <- density_df %>%
+  summarise(cantidad_muni_unicos = n_distinct(muni_nombre)) %>%
+  pull(cantidad_muni_unicos)
+
+# Contar el número de valores únicos de muni_nombre en los datos filtrados
+muni_unicos_filtrados <- filtered_density_df %>%
+  summarise(cantidad_muni_unicos = n_distinct(muni_nombre)) %>%
+  pull(cantidad_muni_unicos)
+
+# Calcular el porcentaje de valores con las que trabajaremos
+porcentaje_incluidos <- 
+  (muni_unicos_filtrados / muni_unicos_original) * 100 
+
+
+# Graficar el histograma
+ggplot(filtered_density_df, aes(x = density_of_health_coverage_by_m2)) +
+  geom_histogram(binwidth = 100, fill = "blue", color = "black") +
+  labs(titulo = "Histograma de la Densidad de Cobertura de Salud por m² (<= 1)",
+       x = "Densidad de Cobertura de Salud por m²",
+       y = "Frecuencia") +
+  theme_minimal() +
+  annotate("text", x = Inf, y = Inf, 
+           label = paste("percentil:", 
+                         round(porcentaje_incluidos, 0)), 
+           hjust = 1.1, vjust = 1.1)
+
+```
+
+
+
+```{r}
+
+# Calcular el histograma
+hist_data <- filtered_density_df %>%
+  mutate(bin = cut(density_of_health_coverage_by_m2, breaks = seq(0, 1000, by = 100), right = TRUE, include.lowest = TRUE)) %>%
+  group_by(bin) %>%
+  summarise(frequency = n()) %>%
+  ungroup() %>%
+  mutate(cumulative_percentage = cumsum(frequency) / sum(frequency) * 100) %>%
+  mutate(percentage = (frequency / sum(frequency)) * 100)
+
+# Ordenar los datos por cumulative_percentage (de mayor a menor)
+hist_data_sorted <- hist_data %>%
+  arrange(desc(cumulative_percentage))
+
+# Mostrar la tabla ordenada
+tail(hist_data_sorted, 10)
+```
+
+Con esta información podemos ver que a partir de una densidad de 500 m2 por
+institución, tenemos el 97% de los datos. Por ende, vamos a filtrar los datos.
+
+
+
+### análisis de población y densidad de cobertura de salud
+
+
+2. médicos por 10.000 habitantes:
+Este indicador se calcula dividiendo la población total por el número de 
+entidades prestadoras de salud. Nos permite evaluar la cantidad de 
+entidades prestadoras de salud disponibles por cada habitante. Menor cantidad
+significa menor disponibilidad de servicios de salud, mientras que una mayor
+cantidad puede sugerir una mayor disponibilidad de servicios de salud.
+Fórmula:
+Relación =  (Número de entidades prestadoras de salud / Población total)*10.000
+
+Significa:
+Relación = (3 / 1000)*10.000 = 30
+Por cada 10.000 habitantes hay 30 entidades prestadoras de salud.
+
+
+```{r}
+# SQL query para calcular médicos por 10.000 habitantes
+query <- "
+SELECT 
+    depa_nombre,
+    muni_nombre,
+    Poblacion,
+    COUNT(nombre_prestador) AS institutions,
+    ((COUNT(nombre_prestador))/ Poblacion)*10000 AS medicos_por_10000_habitantes
+FROM base
+WHERE clpr_codigo IN (1, 2)
+  AND muni_nombre NOT IN ('SAN LUIS DE PALENQUE', 'GUACHENE', 'SINCE')
+GROUP BY 
+    depa_nombre, 
+    muni_nombre, 
+    Poblacion
+ORDER BY medicos_por_10000_habitantes DESC;
+"
+# Ejecutar query
+medicos <- dbGetQuery(conn, query)
+# ver resultados
+head(medicos)
+
+```
+
+Ahora, podemos conocer la distribución de los datos con un gráfico de dispersión
+
+
+```{r}
+ggplot(medicos, aes(x=medicos_por_10000_habitantes)) + 
+  geom_step(stat="ecdf", aes(y= ..y..*100)) +
+  scale_x_continuous(name ="medicos por cada 10.000 habitantes") + 
+  scale_y_continuous(name ="Porcentaje acumulado")
+```
+Con el grafico anterior, podemos observar que 
+
+```{r}
+# Calcular percentiles
+percentiles <- quantile(medicos$medicos_por_10000_habitantes, 
+                        probs = seq(0, 1, by = 0.01), na.rm = TRUE)
+
+# Crear una tabla con los percentiles
+percentiles_table <- data.frame(
+  percentile = names(percentiles), 
+  indice = as.numeric(percentiles)
+  )
+
+# Mostrar la tabla de percentiles
+tail(percentiles_table, 10)
+```
+
+Tenemos el 98% de los datos antes de 20 médicos por cada 10.000 habitantes. En
+la siguiente gráfica podemos ver que mayor concentración de datos están entre 
+5 y 10 médicos por cada 10.000 habitantes.
+
+
+```{r}
+# Graficar el histograma
+ggplot(medicos, aes(x = medicos_por_10000_habitantes)) +
+  geom_histogram(binwidth = 5, fill = "blue", color = "black") +
+  labs(titulo = "Histograma de los médicos por cada 10.000 habitantes",
+       x = "médicos por cada 10.000 habitantes",
+       y = "Frecuencia") +
+  theme_minimal() 
+```
+
+
+```{r}
+# Calcular el histograma
+hist_data_medicos <- medicos %>%
+  mutate(bin = cut(medicos_por_10000_habitantes, breaks = seq(0, max(medicos$medicos_por_10000_habitantes, na.rm = TRUE), by = 5), right = TRUE, include.lowest = TRUE)) %>%
+  group_by(bin) %>%
+  summarise(frequency = n()) %>%
+  ungroup() %>%
+  mutate(cumulative_percentage = cumsum(frequency) / sum(frequency) * 100) %>%
+  mutate(percentage = (frequency / sum(frequency)) * 100)
+
+# Ordenar los datos por porcentaje acumulativo
+hist_data_medicos_sorted <- hist_data_medicos %>%
+  arrange(desc(cumulative_percentage))
+
+tail(hist_data_medicos_sorted)
+```
+
+De 0 a 15 médicos por cada 10.000 habitantes tenemos el 96% de los datos y el
+percentil 96.
+
+
+### diagrama de dispersión
+
+```{r}
+# SQL query para calcular la densidad de cobertura de salud en m²
+query <- "
+WITH calculations AS (
+    SELECT 
+        depa_nombre,
+        muni_nombre,
+        Region,
+        Superficie,
+        Poblacion,
+        COUNT(nombre_prestador) AS institutions,
+        Superficie / COUNT(nombre_prestador) AS density_of_health_coverage_by_m2,
+        (COUNT(nombre_prestador) / Poblacion) * 10000 AS medicos_por_10000_habitantes
+    FROM base
+    WHERE clpr_codigo IN (1, 2)
+      AND muni_nombre NOT IN ('SAN LUIS DE PALENQUE', 'GUACHENE', 'SINCE')
+    GROUP BY 
+        depa_nombre,
+        muni_nombre,
+        Region
+)
+SELECT *
+FROM calculations
+WHERE density_of_health_coverage_by_m2 < 250
+  AND medicos_por_10000_habitantes < 20
+ORDER BY density_of_health_coverage_by_m2 DESC;
+"
+# Ejecutar query
+df_cal <- dbGetQuery(conn, query)
+# ver resultados
+head(df_cal)
+
+```
+
+
+```{r}
+# Define los colores personalizados
+colores_regiones <- c("Región Centro Oriente" = "#d6f4ff",  
+                      "Región Centro Sur" = "#d6f4ff",      
+                      "Región Eje Cafetero" = "#d6f4ff",      
+                      "Región Caribe" = "#5e92c2",      
+                      "Región Llano" = "#e29e21",   
+                      "Región Pacífico" = "#d6f4ff")      
+
+# Crear el gráfico de dispersión
+ggplot(df_cal, aes(x = density_of_health_coverage_by_m2, y = medicos_por_10000_habitantes)) +
+  geom_point(aes(color = Region, alpha = Region != "Región Centro Oriente"), size = 2) +  # Añadir los puntos con color y transparencia
+  scale_color_manual(values = c(colores_regiones, 
+                                setNames(rep("grey", length(unique(df_cal$Region)) - 1), setdiff(unique(df_cal$Region), "Región Centro Oriente")))) +  # Asignar colores
+  scale_alpha_manual(values = c("Región Centro Oriente" = 1, "default" = 0.4)) +  # Asignar transparencias
+  labs(title = "Gráfico de Dispersión de Cobertura de Salud y Médicos",
+       x = "Densidad de Cobertura de Salud por m²",
+       y = "Médicos por cada 10.000 Habitantes",
+       color = "Región",
+       alpha = "Distinguir Región") +
+  theme_minimal() +
+  theme(legend.position = "right")  # Ajustar posición de la leyenda
+```
+
+
+la región caribe es una región con pocos médicos por cada 10.000 habitantes. 
+En el llano hay más médicos por cada 10.000 habitantes que en la región caribe.
+
+```{r}
+# Filtrar df_cal donde Region sea "Región Caribe"
+df_cal_caribe <- df_cal[df_cal$Region == "Región Caribe", ]
+
+# Calcular el promedio de density_of_health_coverage_by_m2 y medicos_por_10000_habitantes en df_cal_caribe
+promedio_density_caribe <- mean(df_cal_caribe$density_of_health_coverage_by_m2, na.rm = TRUE)
+promedio_medicos_caribe <- mean(df_cal_caribe$medicos_por_10000_habitantes, na.rm = TRUE)
+
+# Mostrar los resultados
+promedio_density_caribe
+promedio_medicos_caribe
+
+
+```
+
+
+```{r}
+
+# Filtrar df_cal donde Region sea "Región Llano"
+df_cal_llano <- df_cal[df_cal$Region == "Región Llano", ]
+
+# Calcular el promedio de density_of_health_coverage_by_m2 y medicos_por_10000_habitantes en df_cal_llano
+promedio_density_llano <- mean(df_cal_llano$density_of_health_coverage_by_m2, na.rm = TRUE)
+promedio_medicos_llano <- mean(df_cal_llano$medicos_por_10000_habitantes, na.rm = TRUE)
+
+# Mostrar los resultados
+promedio_density_llano
+promedio_medicos_llano
+
+
+```
+
+la region del llano tiene 7.5 médicos por cada 10.000 habitantes y la región
+caribe tiene 3.6 médicos por cada 10.000 habitantes.
+
+
+
+#### publico o privado
+
+```{r}
+
+query <- "
+WITH calculations AS (
+    SELECT 
+        depa_nombre,
+        muni_nombre,
+        naju_nombre,
+        Superficie,
+        Poblacion,
+        COUNT(nombre_prestador) AS institutions,
+        Superficie / COUNT(nombre_prestador) AS density_of_health_coverage_by_m2,
+        (COUNT(nombre_prestador) / Poblacion) * 10000 AS medicos_por_10000_habitantes
+    FROM base
+    WHERE clpr_codigo IN (1, 2)
+      AND muni_nombre NOT IN ('SAN LUIS DE PALENQUE', 'GUACHENE', 'SINCE')
+    GROUP BY 
+        depa_nombre,
+        muni_nombre
+)
+SELECT *
+FROM calculations
+WHERE density_of_health_coverage_by_m2 < 500
+  AND medicos_por_10000_habitantes < 20
+ORDER BY density_of_health_coverage_by_m2 DESC;
+"
+# Ejecutar query
+df_cal <- dbGetQuery(conn, query)
+
+
+# Crear el gráfico de dispersión con una paleta de colores y etiquetas condicionales
+ggplot(df_cal, aes(x = density_of_health_coverage_by_m2, y = medicos_por_10000_habitantes)) +
+  geom_point(aes(color = naju_nombre), size = 2) +  # Añadir puntos coloreados por departamento
+  scale_color_brewer(palette = "Paired") +  # Usar una paleta de colores
+  labs(title = "Gráfico de Dispersión de Cobertura de Salud y Médicos",
+       x = "Densidad de Cobertura de Salud por m²",
+       y = "Médicos por cada 10.000 Habitantes",
+       color = "Departamento") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+```
+
+```{r}
+# Filtrar df_cal donde naju_nombre sea "Privada"
+df_cal_privada <- df_cal[df_cal$naju_nombre == "Privada", ]
+
+# Calcular el promedio de density_of_health_coverage_by_m2 y medicos_por_10000_habitantes en df_cal_privada
+promedio_density_privada <- mean(df_cal_privada$density_of_health_coverage_by_m2, na.rm = TRUE)
+promedio_medicos_privada <- mean(df_cal_privada$medicos_por_10000_habitantes, na.rm = TRUE)
+
+# Mostrar los resultados
+promedio_density_privada
+promedio_medicos_privada
+
+```
+
+
+```{r}
+
+# Filtrar df_cal donde naju_nombre sea "Pública"
+df_cal_pub <- df_cal[df_cal$naju_nombre == "Pública", ]
+
+# Calcular el promedio de density_of_health_coverage_by_m2 y medicos_por_10000_habitantes en df_cal_pub
+promedio_density_pub <- mean(df_cal_pub$density_of_health_coverage_by_m2, na.rm = TRUE)
+promedio_medicos_pub <- mean(df_cal_pub$medicos_por_10000_habitantes, na.rm = TRUE)
+
+# Mostrar los resultados
+promedio_density_pub
+promedio_medicos_pub
+
+
+```
+
+
+#### Caribe
+
+
+```{r}
+# SQL query para calcular la densidad de cobertura de salud en m²
+query <- "
+WITH calculations AS (
+    SELECT 
+        depa_nombre,
+        muni_nombre,
+        Region,
+        Superficie,
+        Poblacion,
+        COUNT(nombre_prestador) AS institutions,
+        Superficie / COUNT(nombre_prestador) AS density_of_health_coverage_by_m2,
+        (COUNT(nombre_prestador) / Poblacion) * 10000 AS medicos_por_10000_habitantes
+    FROM base
+    WHERE clpr_codigo IN (1, 2)
+      AND muni_nombre NOT IN ('SAN LUIS DE PALENQUE', 'GUACHENE', 'SINCE')
+      AND Region = 'Región Caribe'
+    GROUP BY 
+        depa_nombre,
+        muni_nombre,
+        Region
+)
+SELECT *
+FROM calculations
+WHERE density_of_health_coverage_by_m2 < 250
+  AND medicos_por_10000_habitantes < 20
+ORDER BY density_of_health_coverage_by_m2 DESC;
+"
+# Ejecutar query
+df_cal <- dbGetQuery(conn, query)
+# ver resultados
+head(df_cal)
+```
+
+
+```{r}
+
+
+library(RColorBrewer)
+library(dplyr)
+
+# Crear el gráfico de dispersión con una paleta de colores y etiquetas condicionales
+ggplot(df_cal, aes(x = density_of_health_coverage_by_m2, y = medicos_por_10000_habitantes)) +
+  geom_point(aes(color = depa_nombre), size = 2) +  # Añadir puntos coloreados por departamento
+  scale_color_brewer(palette = "Paired") +  # Usar una paleta de colores
+  labs(title = "Gráfico de Dispersión de Cobertura de Salud y Médicos",
+       x = "Densidad de Cobertura de Salud por m²",
+       y = "Médicos por cada 10.000 Habitantes",
+       color = "Departamento") +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  geom_text(data = df_cal %>% filter(density_of_health_coverage_by_m2 < 50 & medicos_por_10000_habitantes > 7.5),
+            aes(label = muni_nombre), hjust = -0.1, vjust = -0.5, size = 3, check_overlap = TRUE) +
+  geom_vline(xintercept = 50, linetype = "dashed", color = "red") +  # Línea vertical
+  geom_hline(yintercept = 7.5, linetype = "dashed", color = "blue")  # Línea horizontal
+
+```
+
+
+```{r}
+
+# Crear el gráfico de dispersión con una paleta de colores y etiquetas condicionales
+ggplot(df_cal, aes(x = density_of_health_coverage_by_m2, y = medicos_por_10000_habitantes)) +
+  geom_point(aes(color = depa_nombre), size = 2) +  # Añadir puntos coloreados por departamento
+  scale_color_brewer(palette = "Paired") +  # Usar una paleta de colores
+  labs(title = "Gráfico de Dispersión de Cobertura de Salud y Médicos",
+       x = "Densidad de Cobertura de Salud por m²",
+       y = "Médicos por cada 10.000 Habitantes",
+       color = "Departamento") +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  geom_text(data = df_cal %>% filter(density_of_health_coverage_by_m2 > 200 & medicos_por_10000_habitantes < 5),
+            aes(label = muni_nombre), hjust = 0.6, vjust = -0.5, size = 2.5, check_overlap = TRUE) +
+  geom_vline(xintercept = 200, linetype = "dashed", color = "red") +  # Línea vertical
+  geom_hline(yintercept = 5, linetype = "dashed", color = "blue")  # Línea horizontal
+```
+
+se recomienda para el caso de los departamentos del caribe implementar políticas
+para aumentar la densidad de cobertura de salud por m² en municipios como "Rio
+Viejo", "Becerril", "Camito", y "Pueblo Bello". En el corto plazo, se recomienda
+que las cabeceras municipales como lo son "Aguachica", "Valledupar" y "Barranquilla"
+acojan a los municipios vecinos para aumentar la densidad de cobertura de salud. 
+
+
+#### Ciudades
+
+```{r}
+# SQL query para calcular la densidad de cobertura de salud en m²
+query <- "
+WITH calculations AS (
+    SELECT 
+        depa_nombre,
+        muni_nombre,
+        Region,
+        Superficie,
+        Poblacion,
+        COUNT(nombre_prestador) AS institutions,
+        Superficie / COUNT(nombre_prestador) AS density_of_health_coverage_by_m2,
+        (COUNT(nombre_prestador) / Poblacion) * 10000 AS medicos_por_10000_habitantes
+    FROM base
+    WHERE clpr_codigo IN (1, 2)
+      AND muni_nombre NOT IN ('SAN LUIS DE PALENQUE', 'GUACHENE', 'SINCE')
+    GROUP BY 
+        depa_nombre,
+        muni_nombre,
+        Region
+)
+SELECT *
+FROM calculations
+ORDER BY density_of_health_coverage_by_m2 DESC;
+"
+# Ejecutar query
+df_cal <- dbGetQuery(conn, query)
+
+
+colores_regiones <- c("CALI" = "#d6f4ff",  
+                      "BARANQUILLA" = "#d6f4ff",      
+                      "BOGOTA" = "#e29e21",   
+                      "MEDELLIN" = "#d6f4ff",
+                      "BUCARAMANGA" = "#d6f4ff",
+                      "CARTAGENA" = "#d6f4ff",
+                      "CUCUTA" = "#d6f4ff",
+                      "IBAGUE" = "#d6f4ff")      
+
+# Filtrar la base de datos original para las ciudades seleccionadas
+ciudades_seleccionadas <- names(colores_regiones)
+base_filtrada <- df_cal %>%
+  filter(muni_nombre %in% ciudades_seleccionadas)
+
+# Crear el gráfico de dispersión
+ggplot(base_filtrada, aes(x = density_of_health_coverage_by_m2, y = medicos_por_10000_habitantes)) +
+  geom_point(aes(color = muni_nombre), size = 3, alpha = 0.8) +  # Puntos coloreados por muni_nombre
+  geom_text(data = base_filtrada, aes(label = muni_nombre), hjust = 0.5, vjust = -0.5, size = 3, check_overlap = TRUE) +  # Etiquetas de ciudades seleccionadas
+  scale_color_manual(values = colores_regiones) +  # Asignar colores personalizados
+  labs(title = "Gráfico de Dispersión de Cobertura de Salud y Médicos (Región Caribe)",
+       x = "Densidad de Cobertura de Salud por m²",
+       y = "Médicos por cada 10.000 Habitantes",
+       color = "Ciudades") +
+  theme_minimal() +
+  theme(legend.position = "right")  # Ajustar posición de la leyenda
+```
+
+se recomienda para Ibagué, Cucauta y Cartagena generar políticas que busquen
+disminuir la densidad de cobertura de salud por m². Es decir, 1 consultorio 
+independiente o IPS más cercanas entre los existentes. Para Bogotá, Medellín y
+Cali, se recomienda aumentar 8 médicos por cada 10.000 habitantes para equiparar
+a Medellin.
+
+
+
